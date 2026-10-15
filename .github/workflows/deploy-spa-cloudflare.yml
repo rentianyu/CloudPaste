@@ -187,43 +187,8 @@ jobs:
 
       # ==================== 步骤 4：环境变量（优先级：Worker现有 -> GitHub -> wrangler配置） ====================
       - name: Resolve ENCRYPTION_SECRET for deploy
-        working-directory: ./backend
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
-          echo "🔐 检查 ENCRYPTION_SECRET 配置..."
-
-          # 1) 如果 Worker 里已存在 ENCRYPTION_SECRET（作为 Secret），则保持不变（跳过）
-          set +e
-          SECRET_LIST_OUTPUT=$(npx wrangler secret list --name cloudpaste-spa 2>&1)
-          set -e
-          if echo "$SECRET_LIST_OUTPUT" | grep -q "ENCRYPTION_SECRET"; then
-            echo "✅ Worker 已存在 ENCRYPTION_SECRET（Secret），保持不变"
-            exit 0
-          fi
-
-          # 2) 如果 GitHub Secrets 里配置了 ENCRYPTION_SECRET，则使用
-          if [[ -n "${{ secrets.ENCRYPTION_SECRET }}" ]]; then
-            echo "✅ 使用 GitHub Secrets 中的 ENCRYPTION_SECRET"
-            ENCRYPTION_VALUE="${{ secrets.ENCRYPTION_SECRET }}"
-            ENCRYPTION_ESCAPED=$(printf '%s' "$ENCRYPTION_VALUE" | sed -e 's/[\\/&]/\\&/g')
-
-            if grep -q "^ENCRYPTION_SECRET =" wrangler.spa.toml; then
-              sed -i -E "s/^ENCRYPTION_SECRET = \".*\"$/ENCRYPTION_SECRET = \"${ENCRYPTION_ESCAPED}\"/" wrangler.spa.toml
-            else
-              sed -i -E "/^\\[vars\\]$/a\\ENCRYPTION_SECRET = \"${ENCRYPTION_ESCAPED}\"" wrangler.spa.toml
-            fi
-            exit 0
-          fi
-
-          # 3) GitHub 没配：用 wrangler.spa.toml 
-          if grep -q "^ENCRYPTION_SECRET =" wrangler.spa.toml; then
-            echo "✅ 使用 wrangler.spa.toml 中的 ENCRYPTION_SECRET"
-          else
-            echo "❌ 缺少 ENCRYPTION_SECRET：GitHub Secrets 未配置，wrangler.spa.toml 也没写"
-            exit 1
-          fi
+          echo "🔐 ENCRYPTION_SECRET 由 Worker Secret 管理（部署后由下方步骤写入），跳过 vars 写入"
 
       # ==================== 步骤 5：部署 SPA Worker ====================
       - name: Deploy to Cloudflare Workers (SPA Mode)
@@ -233,7 +198,20 @@ jobs:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           echo "🚀 使用 SPA 配置部署到 Cloudflare Workers..."
-          npx wrangler deploy --config wrangler.spa.toml 2>&1 | sed -E 's/https:\/\/[a-zA-Z0-9.-]*\.(workers|pages)\.dev/https:\/\/[REDACTED].\1.dev/g'
+          npx wrangler deploy --config wrangler.spa.toml --keep-vars=false 2>&1 | sed -E 's/https:\/\/[a-zA-Z0-9.-]*\.(workers|pages)\.dev/https:\/\/[REDACTED].\1.dev/g'
+
+      - name: Set ENCRYPTION_SECRET as Worker Secret
+        working-directory: ./backend
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          echo "🔐 写入 ENCRYPTION_SECRET 为 Worker Secret..."
+          if [[ -n "${{ secrets.ENCRYPTION_SECRET }}" ]]; then
+            printf '%s' "${{ secrets.ENCRYPTION_SECRET }}" | npx wrangler secret put ENCRYPTION_SECRET --name cloudpaste-spa
+          else
+            echo "⚠️ 未配置 GitHub Secret ENCRYPTION_SECRET，跳过（请确保 Worker 已有该 Secret）"
+          fi
 
       # ==================== 步骤 6：部署后验证 ====================
       - name: Display Success Information

@@ -1,0 +1,55 @@
+name: Sync Upstream (auto)
+
+# 每天 UTC 18:00（北京 02:00）自动同步上游；也可手动触发
+on:
+  schedule:
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork main
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.SYNC_TOKEN }}
+          ref: main
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "upstream-sync-bot"
+          git config user.email "upstream-sync-bot@users.noreply.github.com"
+          git remote add upstream https://github.com/ling-drag0n/CloudPaste.git
+
+      - name: Fetch upstream
+        run: git fetch upstream main
+
+      - name: Merge (conflict-safe)
+        id: merge
+        run: |
+          if git merge --no-edit upstream/main; then
+            echo "✅ 合并成功（无冲突）"
+          else
+            git merge --abort
+            echo "::error title=上游合并冲突::与本地补丁（wrangler.spa.toml / deploy-spa-cloudflare.yml）冲突，已放弃本次同步，补丁未受影响，请人工处理。"
+            exit 1
+          fi
+
+      - name: Push (若涉及 backend/frontend 将自动触发部署)
+        run: |
+          git log --oneline -3
+          if git diff --quiet origin/main..HEAD; then
+            echo "无新提交，跳过 push"
+          else
+            git push origin main
+            echo "✅ 已推送至 fork main"
+          fi

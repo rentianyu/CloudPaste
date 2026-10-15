@@ -20,7 +20,7 @@ jobs:
       - name: Checkout fork main
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.SYNC_TOKEN }}
+          ssh-key: ${{ secrets.SYNC_DEPLOY_KEY }}
           ref: main
           fetch-depth: 0
 
